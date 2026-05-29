@@ -152,3 +152,4 @@ while rodando:
 # Finaliza o ambiente de forma limpa e segura
 pygame.quit()
 sys.exit()
+#teste

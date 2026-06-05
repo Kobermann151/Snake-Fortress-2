@@ -6,6 +6,9 @@ import os
 # Inicializa todos os módulos integrados do PyGame
 pygame.init()
 
+# Inicializa o sistema de som do PyGame (Mixer)
+pygame.mixer.init()
+
 # Inicializa o módulo de fontes do PyGame para o placar
 pygame.font.init()
 
@@ -14,10 +17,7 @@ pygame.font.init()
 # -----------------------------------------------------------------------------
 LARGURA_TELA = 800
 ALTURA_TELA = 600
-TITULO = "Python Crash - Lógica do Corpo e Itens Aleatórios"
-
-# Ajustamos o FPS inicial para 5 para a jogabilidade ficar confortável
-FPS = 5
+TITULO = "Python Crash - Implementação de Efeitos Sonoros"
 
 # Definição de cores básicas usando tuplas (Red, Green, Blue)
 COR_FUNDO = (30, 41, 59)  # Tom de azul escuro (Slate 800)
@@ -91,7 +91,21 @@ for chave, arquivo in arquivos_sprites.items():
         img = pygame.image.load(caminho).convert_alpha()
         sprites[chave] = pygame.transform.scale(img, (tam_personagem, tam_personagem))
     except (FileNotFoundError, pygame.error):
+        print(f"[Aviso] Falha ao carregar '{caminho}'. Fallback geométrico ativado para {chave}.")
         usa_sprites = False
+
+# -----------------------------------------------------------------------------
+# CARREGAMENTO DOS EFEITOS SONOROS (COM FALLBACK SE O ARQUIVO NÃO EXISTIR)
+# -----------------------------------------------------------------------------
+som_morte = None
+pasta_sons = "Sons"  # Atenção ao Case Sensitivity!
+
+try:
+    caminho_som = os.path.join(pasta_sons, "morreu.mp3")
+    som_morte = pygame.mixer.Sound(caminho_som)
+    print("[INFO] Efeito sonoro 'morreu.mp3' carregado com sucesso!")
+except (FileNotFoundError, pygame.error):
+    print("[Aviso] Arquivo de som 'Sons/morreu.mp3' não encontrado. O jogo rodará em modo silencioso.")
 
 # -----------------------------------------------------------------------------
 # GERENCIAMENTO DE ITENS (DINÂMICO POR FASE)
@@ -144,7 +158,7 @@ def reiniciar_posicao_cobra():
     pos_x = (LARGURA_TELA // 2) // tam_personagem * tam_personagem
     pos_y = (ALTURA_TELA // 2) // tam_personagem * tam_personagem
 
-    dir_x = velocidad_base = tam_personagem
+    # Começa se movendo automaticamente para a direita
     dir_x = velocidade_base
     dir_y = 0
 
@@ -156,7 +170,25 @@ def reiniciar_posicao_cobra():
     cobra_viva = True
 
 
-def aplicar_morte_ou_bomba():
+def aplicar_morte_por_colisao(motivo):
+    global vidas, vidas_ganhas_consecutivas, pontos_acumulados_proxima_vida
+
+    vidas -= 1
+    vidas_ganhas_consecutivas = 0
+    pontos_acumulados_proxima_vida = 0
+
+    print(f"[MORTE] Motivo: {motivo} | Vidas restantes: {vidas}")
+
+    # [NOVO]: Toca o áudio de morte se o arquivo foi carregado com sucesso
+    if som_morte:
+        som_morte.play()
+
+    if vidas > 0:
+        reiniciar_posicao_cobra()
+        spawnar_itens()
+
+
+def aplicar_morte_por_bomba():
     global score, vidas, vidas_ganhas_consecutivas, pontos_acumulados_proxima_vida
 
     vidas -= 1
@@ -164,7 +196,11 @@ def aplicar_morte_ou_bomba():
     score = max(0, score - 100)
     pontos_acumulados_proxima_vida = 0
 
-    print(f"[COLISÃO FATAL] Vidas restantes: {vidas} | Score atual: {score}")
+    print(f"[EXPLOSÃO] Atingiu uma bomba! Vidas restantes: {vidas} | Score atual: {score}")
+
+    # [NOVO]: Toca o áudio de morte também ao explodir na bomba
+    if som_morte:
+        som_morte.play()
 
     if vidas > 0:
         reiniciar_posicao_cobra()
@@ -218,20 +254,23 @@ while rodando:
         if tempo_atual - momento_geracao > tempo_limite_item:
             spawnar_itens()
 
-        pos_x += dir_x
-        pos_y += dir_y
+        # Calcula o próximo passo teórico da cabeça
+        proximo_x = pos_x + dir_x
+        proximo_y = pos_y + dir_y
 
-        if pos_x < 0:
-            pos_x = 0; dir_x = 0
-        elif pos_x > LARGURA_TELA - tam_personagem:
-            pos_x = LARGURA_TELA - tam_personagem; dir_x = 0
-        if pos_y < 0:
-            pos_y = 0; dir_y = 0
-        elif pos_y > ALTURA_TELA - tam_personagem:
-            pos_y = ALTURA_TELA - tam_personagem; dir_y = 0
+        # A) DETECÇÃO DE COLISÃO COM AS PAREDES
+        if proximo_x < 0 or proximo_x > LARGURA_TELA - tam_personagem or proximo_y < 0 or proximo_y > ALTURA_TELA - tam_personagem:
+            aplicar_morte_por_colisao("Colisão com a Parede")
+            continue
 
-        nova_cabeca = [pos_x, pos_y]
+        nova_cabeca = [proximo_x, proximo_y]
 
+        # B) DETECÇÃO DE AUTO-COLISÃO
+        if nova_cabeca in corpo_cobra:
+            aplicar_morte_por_colisao("Auto-colisão com o Corpo")
+            continue
+
+        # C) DETECÇÃO DE COLISÃO COM A BOMBA
         colidiu_com_bomba = False
         if bomba_ativa:
             if nova_cabeca == list(pos_bomba):
@@ -243,30 +282,35 @@ while rodando:
                         break
 
         if colidiu_com_bomba:
-            aplicar_morte_ou_bomba()
-        else:
-            corpo_cobra.insert(0, nova_cabeca)
+            aplicar_morte_por_bomba()
+            continue
 
-            comeu_fruta = False
-            if pos_fruta and nova_cabeca == list(pos_fruta):
-                comeu_fruta = True
-                score += 10
-                pontos_acumulados_proxima_vida += 10
+        # Se passou por todas as validações, move a cobra
+        pos_x = proximo_x
+        pos_y = proximo_y
+        corpo_cobra.insert(0, nova_cabeca)
 
-                if pontos_acumulados_proxima_vida >= 100:
-                    pontos_acumulados_proxima_vida -= 100
-                    if vidas < 6:
-                        vidas += 1
-                        vidas_ganhas_consecutivas += 1
+        # D) LÓGICA DE NUTRIÇÃO E PONTUAÇÃO
+        comeu_fruta = False
+        if pos_fruta and nova_cabeca == list(pos_fruta):
+            comeu_fruta = True
+            score += 10
+            pontos_acumulados_proxima_vida += 10
 
-                if (vidas_ganhas_consecutivas >= 2 or score >= 1000) and fase_atual < 5:
-                    fase_atual += 1
-                    vidas_ganhas_consecutivas = 0
+            if pontos_acumulados_proxima_vida >= 100:
+                pontos_acumulados_proxima_vida -= 100
+                if vidas < 6:
+                    vidas += 1
+                    vidas_ganhas_consecutivas += 1
 
-                spawnar_itens()
+            if (vidas_ganhas_consecutivas >= 2 or score >= 1000) and fase_atual < 5:
+                fase_atual += 1
+                vidas_ganhas_consecutivas = 0
 
-            if not comeu_fruta:
-                corpo_cobra.pop()
+            spawnar_itens()
+
+        if not comeu_fruta:
+            corpo_cobra.pop()
 
     # 3. RENDERIZAÇÃO GRÁFICA DA INTERFACE
     tela.fill(COR_FUNDO)
@@ -300,7 +344,7 @@ while rodando:
             else:
                 pygame.draw.rect(tela, COR_CORPO, (parte[0] + 2, parte[1] + 2, tam_personagem - 4, tam_personagem - 4))
 
-    # Strings do Placar (Corrigidas!)
+    # Placar de Informações
     texto_score = f"SCORE: {score}"
     texto_vidas = f"VIDAS: {vidas}"
     texto_fase = f"FASE: {fase_atual}" if fase_atual < 5 else "FASE: FINAL (5)"

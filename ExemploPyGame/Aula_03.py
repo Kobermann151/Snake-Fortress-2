@@ -79,8 +79,8 @@ arquivos_sprites = {
     "cabeca": "snake_green_head.png",
     "morta": "snake_green_xx.png",
     "corpo": "snake_green_blob.png",
-    "maca_vermelha": "apple_alt.png",
-    "maca_verde": "apple_green.png",
+    "maca_vermelha": "Sandvich.png",
+    "maca_verde": "Banana.png",
     "bomba": "bomb.png"
 }
 

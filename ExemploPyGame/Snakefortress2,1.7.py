@@ -14,9 +14,9 @@ COR_P2       = (107, 142,  35)
 MENU, SELECAO, JOGANDO, FIM, CONTAGEM = "menu", "selecao", "jogando", "fim", "contagem"
 
 # ── Modos e Classes ───────────────────────────────────────────────────────────────
-MODO_CLASSICO, MODO_VERSUS, MODO_GUERRA, MODO_GUERRA_COOP = "classico", "versus", "guerra", "guerra_coop"
-DOIS_JOGADORES_MODOS = (MODO_VERSUS, MODO_GUERRA_COOP)
-COM_CPUS_MODOS       = (MODO_GUERRA, MODO_GUERRA_COOP)
+MODO_CLASSICO, MODO_VERSUS, MODO_GUERRA, MODO_GUERRA_COOP, MODO_SOBREVIVENCIA, MODO_SOBREVIVENCIA_COOP = "classico", "versus", "guerra", "guerra_coop", "sobrevivencia", "sobrevivencia_coop"
+DOIS_JOGADORES_MODOS = (MODO_VERSUS, MODO_GUERRA_COOP, MODO_SOBREVIVENCIA_COOP)
+COM_CPUS_MODOS       = (MODO_GUERRA, MODO_GUERRA_COOP, MODO_SOBREVIVENCIA, MODO_SOBREVIVENCIA_COOP)
 
 # DADOS: [Vida, Vel, Cor, [Desc1, Desc2]]
 DADOS_CLASSES = {
@@ -73,6 +73,8 @@ def _fundo(p):
 IMG_BOMBA_NORMAL = _img("imagens/bomb.png")
 IMG_BOMBA_CRIT   = _img("imagens/critbomb.png") or _img("imagens/critbombs.png")
 IMG_ROCKET       = _img("imagens/rocket.png")
+IMG_UBER         = _img("imagens/ubercharge.png")
+SOM_UBER         = _som("sons/ubercharge")
 SOM_EXPLODE, SOM_CRIT_EXPLODE, SOM_ROCKET = [_som(f"sons/{s}") for s in ["explode1", "crit_explode1", "rocket_shoot"]]
 MAPAS_NOMES      = ["2fort", "badlands", "barnblitz", "gorge", "hoodoo", "steel", "upward", "snakewater"]
 IMGS_FUNDOS      = [i for i in [_fundo(f"imagens/{m}.jpg") or _fundo(f"imagens/{m}.jpeg") for m in MAPAS_NOMES] if i]
@@ -128,12 +130,17 @@ def tocar_administrator(oc):
     if os.path.exists(d):
         fs = [f"{d}/{f}" for f in os.listdir(d) if f.lower().startswith(oc)]
         if fs: tocar(pygame.mixer.Sound(random.choice(fs)))
+_musica_atual = None
+_notifs = []
 def tocar_musica(oc, vol=0.5):
     global _musica_atual
     if oc == _musica_atual: return
     fs = glob.glob(f"sons/musicas/{oc}*.*")
     if fs:
-        try: pygame.mixer.music.load(random.choice(fs)); pygame.mixer.music.set_volume(vol); pygame.mixer.music.play(-1)
+        try:
+            pygame.mixer.music.load(random.choice(fs))
+            pygame.mixer.music.set_volume(vol)
+            pygame.mixer.music.play(-1)
         except: pass
     else: pygame.mixer.music.stop()
     _musica_atual = oc
@@ -145,6 +152,7 @@ def draw_notifs():
 class Snake:
     def __init__(self, x, y, cor, iv=None, im=None, nome="?"):
         self.body, self.dir, self.size, self.score, self.cor, self.nome, self.morta = [(x, y)], (1, 0), 5, 0, cor, nome, False
+        self.ultimo_dir, self.mudou_dir = (1, 0), False
         self.img_viva, self.img_morta, self.vidas, self.t_banana, self.t_dalokohs = iv, im, 1, 0, 0
         info = DADOS_CLASSES.get(nome, [150, 1.0])
         self.vida = self.vida_max = info[0]
@@ -170,6 +178,7 @@ class Snake:
         if self.cooldown_especial > 0: self.cooldown_especial -= 1
         if self.cooldown_backstab > 0: self.cooldown_backstab -= 1
     def move(self):
+        self.ultimo_dir, self.mudou_dir = self.dir, False
         x, y = self.body[0]; nx, ny = ((x + self.dir[0]*GRID)//GRID)*GRID, ((y + self.dir[1]*GRID)//GRID)*GRID
         self.body.insert(0, (nx, ny))
         if len(self.body) > self.size: self.body.pop()
@@ -183,18 +192,24 @@ class Snake:
             prev = self.body[i-1]
             if p[0] == prev[0]: pygame.draw.rect(tela, c, (p[0]+off, min(p[1], prev[1])+GRID//2, r*2, GRID))
             else: pygame.draw.rect(tela, c, (min(p[0], prev[0])+GRID//2, p[1]+off, GRID, r*2))
-        p0, img = self.body[0], (self.img_morta if morte else self.img_viva)
+        p0, img = self.body[0], (self.img_morta if morte else (IMG_UBER if not morte and self.uber_timer > 0 and IMG_UBER else self.img_viva))
         if img: tela.blit(img, p0)
         else: pygame.draw.circle(tela, self.cor, (p0[0]+GRID//2, p0[1]+GRID//2), r)
         if self.cargas_bife > 0: pygame.draw.rect(tela, (255,140,40), (p0[0]-2, p0[1]-2, GRID+2, GRID+2), 2, 5)
         if not morte and self.uber_timer > 0: pygame.draw.rect(tela, (0, 255, 255), (p0[0]-4, p0[1]-4, GRID+8, GRID+8), 3, 10)
+        if not morte and self.queimando_timer > 0:
+            for p in self.body:
+                if random.random() < 0.4:
+                    fx = p[0] + random.randint(0, GRID)
+                    fy = p[1] + random.randint(0, GRID)
+                    pygame.draw.circle(tela, (255, random.randint(50, 150), 0), (fx, fy), random.randint(2, 5))
         if not morte:
             f = max(0.0, min(1.0, self.vida/self.vida_max)); bx, by = p0[0], max(HUD_ALTURA, p0[1]-6)
             pygame.draw.rect(tela, (50,15,15), (bx, by, GRID, 4))
             chp = (255,100,0) if self.queimando_timer > 0 else ((60,220,90) if f>0.5 else ((230,200,40) if f>0.25 else (220,60,60)))
             pygame.draw.rect(tela, chp, (bx, by, int(GRID*f), 4))
     @property
-    def cabeca(self): return self.body[0]
+    def cabeca(self): return self.body[0] if self.body else (0, 0)
 
 class SnakeCPU(Snake):
     def __init__(self, x, y, idx):
@@ -202,7 +217,8 @@ class SnakeCPU(Snake):
         self.classe_idx, self.dot_cor, self._eliminado = idx, DOT_COR_CLASSES[idx], False
         self.som_morte, self.som_vitoria, self.som_comemora = SOM_MORTE[idx], SOM_VITORIA[idx], SOM_COMEMORA[idx]
     def ia(self, comidas, corpos, bomb_pos, todas_vivas, bombas, foguetes, flechas):
-        DIRS, oposto, cab, agora = [(1,0),(-1,0),(0,1),(0,-1)], (-self.dir[0], -self.dir[1]), self.cabeca, pygame.time.get_ticks()
+        if self.mudou_dir: return
+        DIRS, oposto, cab, agora = [(1,0),(-1,0),(0,1),(0,-1)], (-self.ultimo_dir[0], -self.ultimo_dir[1]), self.cabeca, pygame.time.get_ticks()
         can_atk, alvo, md = pode_atacar(self, agora), None, float("inf")
         for c in comidas:
             d = abs(c[0]-cab[0]) + abs(c[1]-cab[1])
@@ -233,7 +249,7 @@ class SnakeCPU(Snake):
                 if alvo: s += (md - abs(p[0]-alvo[0]) - abs(p[1]-alvo[1])) * 3
                 s += random.uniform(-0.5, 0.5)
             if s > best_s: best_s, best_d = s, d
-        self.dir = best_d
+        self.dir, self.mudou_dir = best_d, True
         if self.cooldown_especial <= 0:
             if self.nome in ["Soldier", "Sniper"]:
                 dx, dy = self.dir
@@ -286,13 +302,17 @@ def aplicar_powerup(c, t):
 def novo_jogo(modo, idx1, idx2=None):
     _notifs.clear(); p1 = Snake(196, 364, COR_P1, IMG_CLASSE_VIVA[idx1], IMG_CLASSE_MORTA[idx1], NOME_CLASSES[idx1])
     p2 = Snake(784, 364, COR_P2, IMG_CLASSE_VIVA[idx2], IMG_CLASSE_MORTA[idx2], NOME_CLASSES[idx2]) if modo in DOIS_JOGADORES_MODOS and idx2 is not None else None
-    if p2: p2.dir = (-1, 0)
+    if p2: p2.dir = p2.ultimo_dir = (-1, 0)
     cpus = []
     if modo in COM_CPUS_MODOS:
-        ids = [i for i in range(N_CLASSES) if i not in ({idx1} | ({idx2} if idx2 is not None else set()))]
+        if modo in (MODO_SOBREVIVENCIA, MODO_SOBREVIVENCIA_COOP):
+            disp = [i for i in range(N_CLASSES) if i not in ({idx1} | ({idx2} if idx2 is not None else set()))]
+            ids = [random.choice(disp)] if disp else [0]
+        else:
+            ids = [i for i in range(N_CLASSES) if i not in ({idx1} | ({idx2} if idx2 is not None else set()))]
         for i, cidx in enumerate(ids):
             p = pos_livre([p1]+([p2] if p2 else [])+cpus, [], set())
-            c = SnakeCPU(*p, cidx); c.dir = random.choice([(1,0),(-1,0),(0,1),(0,-1)]); cpus.append(c)
+            c = SnakeCPU(*p, cidx); d = random.choice([(1,0),(-1,0),(0,1),(0,-1)]); c.dir = c.ultimo_dir = d; cpus.append(c)
     todas, cset, coms, ctps, cims = [p1]+([p2] if p2 else [])+cpus, set(), [], [], []
     for _ in range(max(3, (1+len(cpus))//2)):
         p, t, im = add_comida(todas, [], cset); coms.append(p); ctps.append(t); cims.append(im); cset.add(p)
@@ -339,7 +359,7 @@ def executar_habilidade(c, vivas, bombs, roks, flas):
     cx, cy, dx, dy = c.cabeca[0], c.cabeca[1], c.dir[0], c.dir[1]
     if c.nome == "Soldier": roks.append(Projetil(cx+dx*2*GRID, cy+dy*2*GRID, dx, dy)); tocar(SOM_ROCKET); c.cooldown_especial = 40
     elif c.nome == "Sniper": flas.append(Projetil(cx+dx*2*GRID, cy+dy*2*GRID, dx, dy, dono=c)); c.cooldown_especial = 50
-    elif c.nome == "Medic": c.uber_timer, c.cooldown_especial = 5*fps_base, 20*fps_base
+    elif c.nome == "Medic": c.uber_timer, c.cooldown_especial = 5*fps_base, 20*fps_base; tocar(SOM_UBER)
     elif c.nome == "Demoman":
         for d in [(dy, -dx), (-dy, dx)]:
             px, py = cx+d[0]*GRID, cy+d[1]*GRID
@@ -387,7 +407,12 @@ def draw_grade():
 
 def draw_hud(p1, p2, cpus, nv):
     pygame.draw.rect(tela, HUD, (0, 0, LARGURA, HUD_ALTURA))
-    def _ic(c): return (f" ⚔×{c.cargas_bife}" if c.cargas_bife > 0 else "") + (" ⚡" if c.acelerado else "") + (f" ❤×{c.vidas}" if c.vidas > 1 else "")
+    def _ic(c):
+        s = (f" ⚔×{c.cargas_bife}" if c.cargas_bife > 0 else "") + (" ⚡" if c.acelerado else "") + (f" ❤×{c.vidas}" if c.vidas > 1 else "")
+        if c.uber_timer > 0: s += f" 🛡️UBER:{c.uber_timer/fps_base:.1f}s"
+        elif c.cooldown_especial > 0: s += f" ⏱️CD:{c.cooldown_especial/fps_base:.1f}s"
+        if c.nome == "Spy" and c.cooldown_backstab > 0: s += f" 🔪BS:{c.cooldown_backstab/fps_base:.1f}s"
+        return s
     lbl = f"P1‑{p1.nome}: {p1.score} HP {int(p1.vida)}/{p1.vida_max}{_ic(p1)}"
     if p2: lbl += f"  P2‑{p2.nome}: {p2.score} HP {int(p2.vida)}/{p2.vida_max}{_ic(p2)}"
     tela.blit(fonte.render(lbl + f"  Nível: {nv}", True, BRANCO), (10, 8))
@@ -434,7 +459,7 @@ def draw_selecao(passo, p1_idx, p2_idx, hover):
     centralizar(fonte_p.render("ESC – Voltar", True, (110,110,110)), ALTURA-26)
 
 estado, modo_jogo, selecao_passo, selecao_p1, selecao_p2, hover_sel = MENU, MODO_GUERRA, 1, -1, -1, -1
-p1 = p2 = None; cobras_cpu, coms, ctps, cims, roks, flas, bombs, cset = [], [], [], [], [], [], [], set()
+p1 = p2 = None; cobras_cpu, coms, ctps, cims, roks, flas, bombs, vivas, cset = [], [], [], [], [], [], [], [], set()
 vencedor, msg_fim, tick_global, fps_base, contagem_inicio_ms = "", "", 0, 8, 0
 
 def iniciar_rodada():
@@ -465,8 +490,8 @@ while True:
         if ev.type == pygame.KEYDOWN:
             k = ev.key
             if estado == MENU:
-                ms = {pygame.K_1:MODO_CLASSICO, pygame.K_2:MODO_VERSUS, pygame.K_3:MODO_GUERRA, pygame.K_4:MODO_GUERRA_COOP}
-                ms.update({pygame.K_KP1:MODO_CLASSICO, pygame.K_KP2:MODO_VERSUS, pygame.K_KP3:MODO_GUERRA, pygame.K_KP4:MODO_GUERRA_COOP})
+                ms = {pygame.K_1:MODO_CLASSICO, pygame.K_2:MODO_VERSUS, pygame.K_3:MODO_GUERRA, pygame.K_4:MODO_GUERRA_COOP, pygame.K_5:MODO_SOBREVIVENCIA, pygame.K_6:MODO_SOBREVIVENCIA_COOP}
+                ms.update({pygame.K_KP1:MODO_CLASSICO, pygame.K_KP2:MODO_VERSUS, pygame.K_KP3:MODO_GUERRA, pygame.K_KP4:MODO_GUERRA_COOP, pygame.K_KP5:MODO_SOBREVIVENCIA, pygame.K_KP6:MODO_SOBREVIVENCIA_COOP})
                 if k in ms: modo_jogo, selecao_passo, selecao_p1, selecao_p2, hover_sel, estado = ms[k], 1, -1, -1, -1, SELECAO
             elif estado == SELECAO:
                 if k == pygame.K_ESCAPE:
@@ -476,12 +501,18 @@ while True:
                 if num is not None and 0 <= num < N_CLASSES: processar_selecao(num)
             elif estado == JOGANDO:
                 d1 = {pygame.K_w:(0,-1), pygame.K_s:(0,1), pygame.K_a:(-1,0), pygame.K_d:(1,0)}
-                if k in d1 and p1.dir != (d1[k][0]*-1, d1[k][1]*-1): p1.dir = d1[k]
-                if k == pygame.K_SPACE: executar_habilidade(p1, todas_vivas, bombas, foguetes, flechas)
+                if k in d1:
+                    nova = d1[k]
+                    if not p1.mudou_dir and nova != (-p1.ultimo_dir[0], -p1.ultimo_dir[1]):
+                        p1.dir, p1.mudou_dir = nova, True
+                if k == pygame.K_SPACE: executar_habilidade(p1, vivas, bombs, roks, flas)
                 if p2:
                     d2 = {pygame.K_UP:(0,-1), pygame.K_DOWN:(0,1), pygame.K_LEFT:(-1,0), pygame.K_RIGHT:(1,0)}
-                    if k in d2 and p2.dir != (d2[k][0]*-1, d2[k][1]*-1): p2.dir = d2[k]
-                    if k in (pygame.K_RSHIFT, pygame.K_RETURN, pygame.K_KP_ENTER): executar_habilidade(p2, todas_vivas, bombas, foguetes, flechas)
+                    if k in d2:
+                        nova = d2[k]
+                        if not p2.mudou_dir and nova != (-p2.ultimo_dir[0], -p2.ultimo_dir[1]):
+                            p2.dir, p2.mudou_dir = nova, True
+                    if k in (pygame.K_RSHIFT, pygame.K_RETURN, pygame.K_KP_ENTER): executar_habilidade(p2, vivas, bombs, roks, flas)
                 if k == pygame.K_m and (p1.morta and (p2 is None or p2.morta)):
                     # Força fim da partida (desiste de assistir)
                     v_atuais = [c for c in cobras_cpu if not c._eliminado]
@@ -494,14 +525,15 @@ while True:
                     estado = FIM
                     tocar_administrator("fracasso")
             elif estado == FIM:
-                if k == pygame.K_r: p1, p2, cobras_cpu, comidas, ctipos, cimgs, bombas, foguetes, flechas = novo_jogo(modo_jogo, selecao_p1, selecao_p2 if modo_jogo in DOIS_JOGADORES_MODOS else None); iniciar_rodada()
+                if k == pygame.K_r: p1, p2, cobras_cpu, coms, ctps, cims, bombs, roks, flas = novo_jogo(modo_jogo, selecao_p1, selecao_p2 if modo_jogo in DOIS_JOGADORES_MODOS else None); iniciar_rodada()
                 if k == pygame.K_c:
                     if IMGS_FUNDOS: IMG_MENU = random.choice(IMGS_FUNDOS)
                     selecao_passo, selecao_p1, selecao_p2, hover_sel, estado = 1, -1, -1, -1, SELECAO
                 if k == pygame.K_m:
                     if IMGS_FUNDOS: IMG_MENU = random.choice(IMGS_FUNDOS)
-                    p1 = p2 = None; cobras_cpu, comidas, ctipos, cimgs, bombas, foguetes, flechas, cset, vencedor, msg_fim, estado = [], [], [], [], [], [], [], set(), "", "", MENU
+                    p1 = p2 = None; cobras_cpu, coms, ctps, cims, bombs, roks, flas, cset, vencedor, msg_fim, estado = [], [], [], [], [], [], [], set(), "", "", MENU
     if estado == SELECAO:
+        tocar_musica("menu")
         draw_selecao(selecao_passo, selecao_p1, selecao_p2, hover_sel)
         pygame.display.flip()
         clock.tick(30)
@@ -511,21 +543,25 @@ while True:
         if IMG_MENU: tela.blit(IMG_MENU, (0,0)); ov = pygame.Surface((LARGURA,ALTURA), pygame.SRCALPHA); ov.fill((0,0,0,140)); tela.blit(ov,(0,0))
         else: tela.fill(FUNDO)
         centralizar(fonte_g.render("SNAKE FORTRESS 2", True, AMARELO), 100); centralizar(fonte_m.render("LUTE ATÈ A MORTE!", True, BRANCO), 165)
-        for i, t in enumerate(["1 – Clássico", "2 – Versus", "3 – Guerra", "4 – Guerra Coop"]): centralizar(fonte_m.render(f"{i+1} – {t}", True, BRANCO), 222 + i*34)
-        y0, leg = 372, [("Bife","⚔ +Dano corpo a corpo",(255,80,80)),("Fishcake","Cura 25% HP máx",(255,140,60)),("Dalokohs","+50 vida máx (8s)",(150,100,40)),("Banana","⚡ Cura 50% HP+vel",(255,220,30)),("Sandvich","Cura 50% HP máx",(200,160,255))]
+        for i, t in enumerate(["1 – Clássico", "2 – Versus", "3 – Guerra", "4 – Guerra Coop", "5 – Sobrevivência", "6 – Sobrevivência Coop"]): centralizar(fonte_m.render(f"{i+1} – {t}", True, BRANCO), 190 + i*34)
+        y0, leg = ALTURA - 160, [("Bife","⚔ +Dano corpo a corpo",(255,80,80)),("Fishcake","Cura 25% HP máx",(255,140,60)),("Dalokohs","+50 vida máx (8s)",(150,100,40)),("Banana","⚡ Cura 50% HP+vel",(255,220,30)),("Sandvich","Cura 50% HP máx",(200,160,255))]
         for n, d, c in leg:
             im = IMGS_FRUTA[NOME_COMIDA.index(n)]
-            if im: tela.blit(im, (LARGURA//2-200, y0-2))
-            tela.blit(fonte_p.render(f"  {n}: {d}", True, c), (LARGURA//2-180, y0)); y0 += 22
+            if im: tela.blit(im, (20, y0-2))
+            tela.blit(fonte.render(f"  {n}: {d}", True, c), (40, y0)); y0 += 26
+        creditos = [
+            "Assets: Valve Software Inc.",
+            "Trilha Sonora: Valve Studio Orchestra",
+            "Obrigado à Valve por criar Team Fortress 2!"
+        ]
+        for i, linha in enumerate(creditos):
+            txt_c = fonte_fx.render(linha, True, (130, 130, 130))
+            tela.blit(txt_c, (LARGURA - txt_c.get_width() - 20, ALTURA - 65 + i * 18))
         pygame.display.flip(); clock.tick(30); continue
 
     if estado == CONTAGEM:
         dt = pygame.time.get_ticks() - contagem_inicio_ms
         if dt >= DURACAO_CONTAGEM_MS: estado = JOGANDO
-        else:
-            seg = 3 - (dt // 1000); txt = fonte_cont.render(str(seg), True, AMARELO); cx, cy = LARGURA//2 - txt.get_width()//2, ALTURA//2 - txt.get_height()//2
-            for dx, dy in ((-3,0),(3,0),(0,-3),(0,3)): tela.blit(fonte_cont.render(str(seg), True, (0,0,0)), (cx+dx, cy+dy))
-            tela.blit(txt, (cx, cy)); centralizar(fonte_m.render("Prepare-se...", True, BRANCO), ALTURA//2 + 80)
 
     if estado == JOGANDO:
         tick_global += 1; v_cpu = [c for c in cobras_cpu if not c._eliminado]
@@ -534,6 +570,12 @@ while True:
         for c in vivas: c.tick_powerups()
         sc = (p1.score if p1 else 0) + (p2.score if p2 else 0) + sum(c.score for c in v_cpu)
         nv = sc // 100 + 1; fps_base = max(3, int((8+nv)*VELOCIDADE_BASE_FATOR))
+        if modo_jogo in (MODO_SOBREVIVENCIA, MODO_SOBREVIVENCIA_COOP):
+            while len([c for c in cobras_cpu if not c._eliminado]) < nv:
+                p = pos_livre([p1]+([p2] if p2 else [])+cobras_cpu, [], set(coms))
+                c = SnakeCPU(*p, random.randint(0, N_CLASSES-1))
+                c.dir = c.ultimo_dir = random.choice([(1,0),(-1,0),(0,1),(0,-1)])
+                cobras_cpu.append(c); v_cpu.append(c); vivas.append(c); add_notif(f"NOVO INIMIGO: {c.nome}!", (255,50,50), LARGURA//2, ALTURA//2)
         corps, bpos = [c.body for c in vivas], {(x,y) for x,y,_ in bombs}
         for c in v_cpu: c.ia(coms, corps, bpos, vivas, bombs, roks, flas)
         for c in vivas:
@@ -547,10 +589,16 @@ while True:
         for c in v_cpu:
             if c in mortas: todas_reagem_matou(c, vivas, mortas); c._eliminado, c.body = True, []
         for j in [p1, p2]:
-            if j and j in mortas: j.morta, j.body = True, []; todas_reagem_matou(j, vivas, mortas)
+            if j and j in mortas:
+                todas_reagem_matou(j, vivas, mortas)
+                j.morta, j.body = True, []
         v_fin = [j for j in [p1, p2] if j and not j.morta] + [c for c in cobras_cpu if not c._eliminado]
         if modo_jogo == MODO_CLASSICO and p1.morta: vencedor, msg_fim, estado = "FIM DE JOGO", f"Pontuação: {p1.score}", FIM
-        elif len(v_fin) <= 1:
+        elif modo_jogo in (MODO_SOBREVIVENCIA, MODO_SOBREVIVENCIA_COOP):
+            if p1.morta and (p2 is None or p2.morta):
+                vencedor, msg_fim, estado = "FIM DE JOGO", f"Sobreviveu até Nível {nv}", FIM
+                tocar_administrator("fracasso")
+        elif modo_jogo != MODO_CLASSICO and len(v_fin) <= 1:
             estado = FIM
             if len(v_fin) == 1:
                 v = v_fin[0]; vencedor = "PLAYER 1" if v==p1 else ("PLAYER 2" if v==p2 else v.nome)
@@ -578,6 +626,13 @@ while True:
     if p1: p1.draw(p1.morta)
     if p2: p2.draw(p2.morta)
     draw_notifs()
+    if estado == CONTAGEM:
+        dt = pygame.time.get_ticks() - contagem_inicio_ms
+        seg = 3 - (dt // 1000)
+        if seg > 0:
+            txt = fonte_cont.render(str(seg), True, AMARELO); cx, cy = LARGURA//2 - txt.get_width()//2, ALTURA//2 - txt.get_height()//2
+            for dx, dy in ((-3,0),(3,0),(0,-3),(0,3)): tela.blit(fonte_cont.render(str(seg), True, (0,0,0)), (cx+dx, cy+dy))
+            tela.blit(txt, (cx, cy)); centralizar(fonte_m.render("Prepare-se...", True, BRANCO), ALTURA//2 + 80)
     if estado == JOGANDO and (p1.morta and (p2 is None or p2.morta)): centralizar(fonte_p.render("VOCÊ MORREU! [M] Sair ou assista...", True, BRANCO), ALTURA - 30)
     if estado == FIM:
         for c in [p1, p2]+cobras_cpu:

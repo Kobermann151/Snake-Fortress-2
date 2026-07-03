@@ -99,7 +99,7 @@ IMG_P1_VIVA  = _img("imagens/HeavyFace2.png")
 IMG_P1_MORTA = _img("imagens/cabeca_p1_morte.png")
 IMG_P2_VIVA  = _img("imagens/Soldier2.png")
 IMG_P2_MORTA = _img("imagens/cabeca_p2_morte.png")
-IMG_BOMBA    = _img("imagens/bomba.png")
+IMG_BOMBA    = _img("imagens/Pumpkinbomb.png")
 IMG_MENU     = _fundo("imagens/menu_fundo.jpg")
 
 # fruta1‥5 → índice 0‥4 (um por tipo de comida)

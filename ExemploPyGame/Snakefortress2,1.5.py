@@ -1,6 +1,7 @@
 import pygame, random, glob, os
 pygame.init()
 pygame.mixer.init()
+pygame.mixer.set_num_channels(16)
 LARGURA, ALTURA, GRID = 1000, 700, 28
 HUD_ALTURA  = 55
 Y_MIN_CELLS = HUD_ALTURA // GRID + 1
@@ -56,6 +57,19 @@ FATOR_VEL_CLASSE = {
     # Pyro e Engineer usam o padrão (1.0)
 }
 
+# ── Descrições das classes (Habilidades e Efeitos) ─────────────────────────────
+DESC_CLASSES = {
+    "Scout":    ["HP: 125 | Velocidade: 133%", "Ágil e difícil de atingir."],
+    "Soldier":  ["HP: 200 | Velocidade: 90%",  "Habilidade: Foguete (100 de dano)."],
+    "Pyro":     ["HP: 175 | Velocidade: 100%", "Habilidade: Queima (40 de dano / 6s)."],
+    "Demoman":  ["HP: 175 | Velocidade: 95%",  "Bombas e 25% Res. Explosiva."],
+    "Heavy":    ["HP: 300 | Velocidade: 80%",  "Vida massiva, mas velocidade lenta."],
+    "Engineer": ["HP: 150 | Velocidade: 100%", "Equilibrado: Atributos padrão."],
+    "Medic":    ["HP: 150 | Velocidade: 108%", "Regeneração e Ubercarga (Invencível)."],
+    "Sniper":   ["HP: 125 | Velocidade: 104%", "Flechas: 360 cabeça / 120 corpo."],
+    "Spy":      ["HP: 125 | Velocidade: 104%", "Backstab (10s CD): Mata ao atingir o rabo."],
+}
+
 # ── Combate corpo-a-corpo ──────────────────────────────────────────────────────
 DANO_ATAQUE_BASE   = 50
 DANO_ATAQUE_BIFE   = 80
@@ -95,9 +109,12 @@ def _img(path, sz=GRID):
             pygame.image.load(path).convert_alpha(), (sz, sz))
     except Exception:
         return None
-def _som(base):
+def _som(base, vol=1.0):
     for ext in (".wav", ".ogg"):
-        try: return pygame.mixer.Sound(base + ext)
+        try:
+            s = pygame.mixer.Sound(base + ext)
+            s.set_volume(vol)
+            return s
         except: pass
     return None
 def _fundo(path):
@@ -110,8 +127,16 @@ def _fundo(path):
     sup = pygame.Surface((LARGURA, ALTURA))
     sup.blit(img, (0, 0), ((nw-LARGURA)//2, (nh-ALTURA)//2, LARGURA, ALTURA))
     return sup
-IMG_BOMBA  = _img("imagens/Pumpkinbomb.png.png")
-IMG_MENU   = _fundo("imagens/menu_fundo.jpg")
+IMG_BOMBA_NORMAL = _img("imagens/bomb.png")
+IMG_BOMBA_CRIT   = _img("imagens/critbomb.png")
+if not IMG_BOMBA_CRIT: IMG_BOMBA_CRIT = _img("imagens/critbombs.png") # Fallback para o que vi no ls
+IMG_ROCKET       = _img("imagens/rocket.png")
+SOM_EXPLODE      = _som("sons/explode1")
+SOM_CRIT_EXPLODE = _som("sons/crit_explode1")
+SOM_ROCKET       = _som("sons/rocket_shoot")
+MAPAS_NOMES      = ["2fort", "badlands", "barnblitz", "gorge", "hoodoo", "steel", "upward", "snakewater"]
+IMGS_FUNDOS      = [img for img in [_fundo(f"imagens/{m}.jpg") if _fundo(f"imagens/{m}.jpg") else _fundo(f"imagens/{m}.jpeg") for m in MAPAS_NOMES] if img]
+IMG_MENU         = random.choice(IMGS_FUNDOS) if IMGS_FUNDOS else _fundo("imagens/menu_fundo.jpg")
 IMGS_FRUTA = [_img(f"imagens/fruta{i}.png") for i in range(1, N_TIPOS+1)]
 _FB_VIVA  = {"heavy": "imagens/HeavyFace2.png",      "soldier": "imagens/Soldier2.png"}
 _FB_MORTA = {"heavy": "imagens/Heavyded.png",  "soldier": "imagens/cabeca_p2_morte.png"}
@@ -122,8 +147,8 @@ def _ld(n, s, sz=GRID):
 IMG_CLASSE_VIVA  = [_ld(n, "viva") for n in _NOMES_LOW]
 IMG_CLASSE_MORTA = [_ld(n, "morta") for n in _NOMES_LOW]
 IMG_CLASSE_SEL   = [_ld(n, "viva", 80) for n in _NOMES_LOW]
-SOM_MORTE, SOM_VITORIA, SOM_COMEMORA = ([_som(f"sons/{n}_{s}") for n in _NOMES_LOW] for s in ("morte","vitoria","comemora"))
-SOM_MELEE    = [_som(f"sons/melee_frying_pan_0{i}") for i in range(1, 5)]
+SOM_MORTE, SOM_VITORIA, SOM_COMEMORA = ([_som(f"sons/{n}_{s}", 0.8) for n in _NOMES_LOW] for s in ("morte","vitoria","comemora"))
+SOM_MELEE    = [_som(f"sons/melee _frying_pan_0{i}") for i in range(1, 5)]
 def tocar(s):
     if s: s.play()
 
@@ -136,12 +161,29 @@ def _listar_falas(classe, ocasiao):
     termos, sons = sin.get(ocasiao, [ocasiao]), []
     for f in os.listdir(dir_p):
         if any(t in f.lower() for t in termos) and f.lower().endswith((".mp3", ".wav", ".ogg")):
-            sons.append(pygame.mixer.Sound(os.path.join(dir_p, f)))
+            s = pygame.mixer.Sound(os.path.join(dir_p, f))
+            s.set_volume(0.8)
+            sons.append(s)
     return sons
 
 def tocar_fala(cobra, ocasiao):
+    # Excessão para sons de morte: tocam sempre (interrompendo outros) e apenas uma vez.
+    if ocasiao == "morte":
+        if getattr(cobra, "falou_morte", False):
+            return
+        if hasattr(cobra, "canal_fala") and cobra.canal_fala:
+            cobra.canal_fala.stop()
+        sons = getattr(cobra, "falas", {}).get("morte", [])
+        if sons:
+            cobra.canal_fala = random.choice(sons).play()
+            cobra.falou_morte = True
+        return
+
+    if hasattr(cobra, "canal_fala") and cobra.canal_fala and cobra.canal_fala.get_busy():
+        return
     sons = getattr(cobra, "falas", {}).get(ocasiao, [])
-    if sons: random.choice(sons).play()
+    if sons:
+        cobra.canal_fala = random.choice(sons).play()
 
 def todas_reagem_matou(vitima, todas_cobras, mortas_frame=None):
     if getattr(vitima, "falou_matou", False): return
@@ -220,6 +262,14 @@ class Snake:
         self.falas = {o: _listar_falas(nome, o) for o in ["dor","vitoria","morte","matou","atacar"]}
         self.falou_vitoria = False
         self.falou_matou = False
+        self.falou_morte = False
+        self.canal_fala = None
+        self.uber_ativa = False
+        self.uber_timer = 0
+        self.queimando_timer = 0
+        self.burn_source = None
+        self.cooldown_especial = 0
+        self.cooldown_backstab = 0
     @property
     def acelerado(self): return self.t_banana > 0
     def tick_powerups(self):
@@ -229,26 +279,73 @@ class Snake:
             if self.t_dalokohs == 0:
                 self.vida_max -= 50
                 self.vida = min(self.vida, self.vida_max)
+        
+        # Habilidades e efeitos passivos
+        if self.nome == "Medic":
+            # 10 HP por segundo. Como tick_powerups roda a cada frame:
+            self.vida = min(self.vida_max, self.vida + 10 / max(1, fps_base))
+        
+        if self.uber_timer > 0:
+            self.uber_timer -= 1
+            if self.uber_timer <= 0: self.uber_ativa = False
+            
+        if self.queimando_timer > 0:
+            self.queimando_timer -= 1
+            dano_fogo = 40 / (6 * max(1, fps_base))
+            self.vida -= dano_fogo
+            if self.vida <= 0 and not self.morta:
+                self.vida = 0
+                aplicar_dano(self, 0, self.burn_source) # Trigger de morte
+        
+        if self.cooldown_especial > 0:
+            self.cooldown_especial -= 1
+        if self.cooldown_backstab > 0:
+            self.cooldown_backstab -= 1
     def move(self):
         x, y = self.body[0]
         nx, ny = ((x + self.dir[0]*GRID)//GRID)*GRID, ((y + self.dir[1]*GRID)//GRID)*GRID
         self.body.insert(0, (nx, ny))
         if len(self.body) > self.size: self.body.pop()
     def draw(self, morte=False):
-        for i, p in enumerate(self.body):
+        if not self.body: return
+        raio = GRID // 2 - 2  # Levemente mais fino
+        offset = (GRID - raio * 2) // 2
+        # Desenha o corpo da cauda para a cabeça para que a sobreposição (massa única) funcione
+        for i in range(len(self.body) - 1, -1, -1):
+            p = self.body[i]
+            b = max(100, 255 - i * 5)
+            cor = tuple(min(c, b) for c in self.cor)
+            
             if i == 0:
                 img = self.img_morta if morte and self.img_morta else self.img_viva
-                if img: tela.blit(img, p)
-                if self.cargas_bife > 0:
-                    pygame.draw.rect(tela, (255,140,40), (p[0]-2, p[1]-2, GRID+2, GRID+2), 2, border_radius=5)
-                if img: continue
-            b = max(100, 255 - i*5)
-            pygame.draw.rect(tela, tuple(min(c, b) for c in self.cor), (*p, GRID-2, GRID-2), border_radius=4)
-        if not morte and self.body:
-            p, frac = self.body[0], max(0.0, min(1.0, self.vida / self.vida_max))
-            bx, by = p[0], max(HUD_ALTURA, p[1]-6)
+                if not img:
+                    pygame.draw.circle(tela, cor, (p[0] + GRID // 2, p[1] + GRID // 2), raio)
+                continue
+
+            # Segmento do corpo: círculo e conector para o segmento anterior (em direção à cabeça)
+            pygame.draw.circle(tela, cor, (p[0] + GRID // 2, p[1] + GRID // 2), raio)
+            prev = self.body[i-1]
+            if p[0] == prev[0]: # Vertical
+                pygame.draw.rect(tela, cor, (p[0] + offset, min(p[1], prev[1]) + GRID // 2, raio * 2, GRID))
+            else: # Horizontal
+                pygame.draw.rect(tela, cor, (min(p[0], prev[0]) + GRID // 2, p[1] + offset, GRID, raio * 2))
+        
+        # Desenha a cabeça (imagem e efeitos) por cima da massa
+        p0 = self.body[0]
+        img = self.img_morta if morte and self.img_morta else self.img_viva
+        if img: tela.blit(img, p0)
+        
+        if self.cargas_bife > 0:
+            pygame.draw.rect(tela, (255,140,40), (p0[0]-2, p0[1]-2, GRID+2, GRID+2), 2, border_radius=5)
+        if not morte and self.uber_ativa:
+            pygame.draw.rect(tela, (0, 255, 255), (p0[0]-4, p0[1]-4, GRID+8, GRID+8), 3, border_radius=10)
+        
+        if not morte:
+            frac = max(0.0, min(1.0, self.vida / self.vida_max))
+            bx, by = p0[0], max(HUD_ALTURA, p0[1]-6)
             pygame.draw.rect(tela, (50,15,15), (bx, by, GRID, 4))
             c_hp = (60,220,90) if frac > 0.5 else ((230,200,40) if frac > 0.25 else (220,60,60))
+            if self.queimando_timer > 0: c_hp = (255, 100, 0)
             pygame.draw.rect(tela, c_hp, (bx, by, int(GRID*frac), 4))
     @property
     def cabeca(self): return self.body[0]
@@ -271,7 +368,7 @@ class SnakeCPU(Snake):
             pos = self._prox(pos, d)
             if self._perigoso(pos, corpos, bomb_pos): return k
         return n
-    def ia(self, comidas, corpos, bomb_pos):
+    def ia(self, comidas, corpos, bomb_pos, todas_vivas, bombas, foguetes, flechas):
         DIRS   = [(1,0),(-1,0),(0,1),(0,-1)]
         oposto = (-self.dir[0], -self.dir[1])
         cab    = self.cabeca
@@ -285,17 +382,25 @@ class SnakeCPU(Snake):
             d = abs(c[0]-cx) + abs(c[1]-cy)
             if d < md: md, alvo = d, c
 
-        # 2. Se puder atacar, procurar inimigos muito perto (distância < 4 casas)
+        # 2. Se puder atacar (ou for Pyro/Spy), procurar inimigos por perto
         inimigo_alvo, d_inimigo = None, float("inf")
-        for c_body in corpos:
-            if c_body is self.body: continue
-            for p in c_body:
+        for c in todas_vivas:
+            if c is self or c.morta or getattr(c, "_eliminado", False): continue
+            
+            # Se for Spy, foca no último segmento (Backstab)
+            if self.nome == "Spy" and c.body:
+                p = c.body[-1]
                 d = abs(p[0]-cx) + abs(p[1]-cy)
-                if d < d_inimigo:
-                    d_inimigo = d
-                    inimigo_alvo = p
+                if d < d_inimigo: d_inimigo, inimigo_alvo = d, p
+            else:
+                for p in c.body:
+                    d = abs(p[0]-cx) + abs(p[1]-cy)
+                    if d < d_inimigo: d_inimigo, inimigo_alvo = d, p
         
-        if can_atk and inimigo_alvo and d_inimigo < 4 * GRID:
+        # Agressividade baseada na classe e cooldown
+        agressivo = can_atk or self.nome in ["Pyro", "Spy"]
+        dist_perseguicao = 6 * GRID if self.nome in ["Pyro", "Spy", "Scout"] else 4 * GRID
+        if agressivo and inimigo_alvo and d_inimigo < dist_perseguicao:
             alvo, md = inimigo_alvo, d_inimigo
 
         best_s, best_d = -float("inf"), self.dir
@@ -317,14 +422,44 @@ class SnakeCPU(Snake):
                     continue # Evita se não puder atacar
             else:
                 # Pontuação normal de espaço e distância ao alvo
-                s = self._espaco(prox, d, corpos, bomb_pos) * 2
+                s = self._espaco(prox, d, corpos, bomb_pos, n=10) * 50
                 if alvo:
                     s += (md - abs(prox[0]-alvo[0]) - abs(prox[1]-alvo[1])) * 3
                 s += random.uniform(-0.5, 0.5)
                 
             if s > best_s:
                 best_s, best_d = s, d
+        
+        # Verificação extra: se a melhor direção ainda for perigosa, tenta qualquer uma que não seja parede/corpo
+        prox_final = self._prox(cab, best_d)
+        if fora(prox_final) or prox_final in self.body:
+            for d in DIRS:
+                if d == oposto: continue
+                p = self._prox(cab, d)
+                if not (fora(p) or p in self.body):
+                    best_d = d
+                    break
+
         self.dir = best_d
+        
+        # Uso de habilidades especiais pela IA
+        if self.cooldown_especial <= 0:
+            if self.nome in ["Soldier", "Sniper"]:
+                dx, dy = self.dir
+                # Soldier e Sniper atiram do 2º bloco (evita atirar em quem está colado)
+                s_dist = 2
+                for dist in range(s_dist, 11):
+                    px, py = cx + dx*dist*GRID, cy + dy*dist*GRID
+                    if any(p[0] == px and p[1] == py for c in todas_vivas if c is not self for p in c.body):
+                        executar_habilidade(self, todas_vivas, bombas, foguetes, flechas)
+                        break
+            elif self.nome == "Medic" and self.vida < self.vida_max * 0.6:
+                executar_habilidade(self, todas_vivas, bombas, foguetes, flechas)
+            elif self.nome == "Demoman":
+                # Planta se houver inimigos num raio de 3 blocos (checa todo o corpo)
+                if any(any(abs(p[0]-cx) <= 3*GRID and abs(p[1]-cy) <= 3*GRID for p in c.body) 
+                       for c in todas_vivas if c is not self):
+                    executar_habilidade(self, todas_vivas, bombas, foguetes, flechas)
 def pos_livre(cobras, bombas, comidas_set):
     ocupado = comidas_set | {(x, y) for x, y, _ in bombas}
     for c in cobras:
@@ -396,8 +531,9 @@ def inicio_cpus(n, p1, p2):
     return res
 def novo_jogo(modo, idx1, idx2=None):
     _notifs.clear()
-    p1 = Snake(200, 360, COR_P1, IMG_CLASSE_VIVA[idx1], IMG_CLASSE_MORTA[idx1], NOME_CLASSES[idx1])
-    p2 = Snake(800, 360, COR_P2, IMG_CLASSE_VIVA[idx2], IMG_CLASSE_MORTA[idx2], NOME_CLASSES[idx2]) if modo in DOIS_JOGADORES_MODOS and idx2 is not None else None
+    # Posições iniciais alinhadas ao GRID (múltiplos de 28)
+    p1 = Snake(196, 364, COR_P1, IMG_CLASSE_VIVA[idx1], IMG_CLASSE_MORTA[idx1], NOME_CLASSES[idx1])
+    p2 = Snake(784, 364, COR_P2, IMG_CLASSE_VIVA[idx2], IMG_CLASSE_MORTA[idx2], NOME_CLASSES[idx2]) if modo in DOIS_JOGADORES_MODOS and idx2 is not None else None
     if p2: p2.dir = (-1, 0)
     cpus = []
     if modo in COM_CPUS_MODOS:
@@ -410,7 +546,61 @@ def novo_jogo(modo, idx1, idx2=None):
     for _ in range(max(3, (1+len(cpus))//2)):
         p, t, im = add_comida(todas, [], cset)
         comidas.append(p); ctipos.append(t); cimgs.append(im); cset.add(p)
-    return p1, p2, cpus, comidas, ctipos, cimgs, []
+    return p1, p2, cpus, comidas, ctipos, cimgs, [], [], []
+class Foguete:
+    def __init__(self, x, y, dx, dy):
+        self.x, self.y, self.dx, self.dy = x, y, dx, dy
+        self.dano = 100
+    def move(self):
+        self.x += self.dx * GRID
+        self.y += self.dy * GRID
+    def fora(self):
+        return self.x < -GRID or self.x > LARGURA or self.y < HUD_ALTURA - GRID or self.y > ALTURA
+
+class Flecha:
+    def __init__(self, x, y, dx, dy, dono):
+        self.x, self.y, self.dx, self.dy = x, y, dx, dy
+        self.dono = dono
+    def move(self):
+        self.x += self.dx * GRID
+        self.y += self.dy * GRID
+    def fora(self):
+        return self.x < -GRID or self.x > LARGURA or self.y < HUD_ALTURA - GRID or self.y > ALTURA
+
+def update_foguetes(nivel, cobras, foguetes):
+    # Spawn de foguetes baseado no nível (chance por frame)
+    if random.random() < 0.02 + (nivel * 0.01):
+        # Tenta encontrar um local de spawn que não esteja perto de nenhuma cobra
+        for _ in range(10):
+            lado = random.randint(0, 3)
+            if lado == 0: # Esquerda -> Direita
+                fx, fy, fdx, fdy = -GRID, random.randint(Y_MIN_CELLS, (ALTURA//GRID)-1)*GRID, 1, 0
+            elif lado == 1: # Direita -> Esquerda
+                fx, fy, fdx, fdy = LARGURA, random.randint(Y_MIN_CELLS, (ALTURA//GRID)-1)*GRID, -1, 0
+            elif lado == 2: # Cima -> Baixo
+                fx, fy, fdx, fdy = (random.randint(0, (LARGURA//GRID)-1)*GRID), HUD_ALTURA, 0, 1
+            else: # Baixo -> Cima
+                fx, fy, fdx, fdy = (random.randint(0, (LARGURA//GRID)-1)*GRID), ALTURA-GRID, 0, -1
+            
+            # Checa proximidade com qualquer cobra (distância de 4 blocos)
+            dist_min = 4 * GRID
+            perto = False
+            for c in cobras:
+                if any(abs(seg[0] - fx) < dist_min and abs(seg[1] - fy) < dist_min for seg in c.body):
+                    perto = True
+                    break
+            
+            if not perto:
+                foguetes.append(Foguete(fx, fy, fdx, fdy))
+                tocar(SOM_ROCKET)
+                break
+    
+    for f in foguetes[:]:
+        f.move()
+        if f.fora():
+            foguetes.remove(f)
+    return foguetes
+
 def checar_comer(cobra, comidas, ctipos, cimgs, cset, todas_vivas, bombas):
     cab = cobra.cabeca
     if cab in cset:
@@ -434,24 +624,69 @@ def dano_ataque(cobra):
     if cobra.cargas_bife > 0:
         cobra.cargas_bife -= 1
         return DANO_ATAQUE_BIFE
+    if cobra.nome == "Spy":
+        return 25
     return DANO_ATAQUE_BASE
 def aplicar_dano(cobra, dano, atacante=None):
+    if cobra.uber_ativa:
+        return
+    
+    # Resistência do Demoman a explosivos (25% de redução)
+    s_motivo = atacante if isinstance(atacante, str) else (atacante.nome if hasattr(atacante, "nome") else str(atacante))
+    if cobra.nome == "Demoman" and "explosivo" in s_motivo.lower():
+        dano = int(dano * 0.75)
+
     cobra.vida -= dano
     cx, cy = cobra.cabeca
-    motivo = atacante.nome if hasattr(atacante, "nome") else str(atacante)
-    add_notif(f"-{dano} HP" + (f" ({motivo})" if motivo else ""), (255, 70, 70), cx, cy, ttl=60)
+    add_notif(f"-{int(dano)} HP" + (f" ({s_motivo})" if s_motivo else ""), (255, 70, 70), cx, cy, ttl=60)
     if cobra.vida > 0:
         tocar_fala(cobra, "dor")
     elif not cobra.morta:
         tocar_fala(cobra, "morte")
         if hasattr(atacante, "falas"):
             tocar_fala(atacante, "matou"); cobra.falou_matou = True
-def processar_colisoes(todas_vivas, bombas, agora_ms):
+
+def aplicar_explosao(px, py, dano, motivo, todas_vivas):
+    """Aplica dano em uma área 5x5 ao redor de (px, py)."""
+    raio = 2 * GRID
+    # Encontrar todas as cobras que têm algum segmento na área 5x5
+    for cobra in todas_vivas:
+        if any(abs(seg[0] - px) <= raio and abs(seg[1] - py) <= raio for seg in cobra.body):
+            aplicar_dano(cobra, dano, motivo)
+
+def executar_habilidade(cobra, todas_vivas, bombas, foguetes, flechas):
+    if cobra.cooldown_especial > 0 or cobra.morta:
+        return
+    
+    if cobra.nome == "Soldier":
+        fx, fy = cobra.cabeca
+        foguetes.append(Foguete(fx + cobra.dir[0]*2*GRID, fy + cobra.dir[1]*2*GRID, cobra.dir[0], cobra.dir[1]))
+        tocar(SOM_ROCKET)
+        cobra.cooldown_especial = 40
+    
+    elif cobra.nome == "Sniper":
+        fx, fy = cobra.cabeca
+        flechas.append(Flecha(fx + cobra.dir[0]*2*GRID, fy + cobra.dir[1]*2*GRID, cobra.dir[0], cobra.dir[1], cobra))
+        cobra.cooldown_especial = 50
+        
+    elif cobra.nome == "Medic":
+        cobra.uber_ativa = True
+        cobra.uber_timer = 5 * max(1, fps_base)
+        cobra.cooldown_especial = 20 * max(1, fps_base)
+        
+    elif cobra.nome == "Demoman":
+        cx, cy = cobra.cabeca
+        dx, dy = cobra.dir
+        # Perpendicular: (dx, dy) -> (dy, -dx) e (-dy, dx)
+        for d in [(dy, -dx), (-dy, dx)]:
+            px, py = cx + d[0]*GRID, cy + d[1]*GRID
+            if not fora((px, py)):
+                bombas.append((px, py, False))
+        cobra.cooldown_especial = 60
+
+def processar_colisoes(todas_vivas, bombas, foguetes, flechas, agora_ms):
     """
-    Aplica dano de bombas e de ataques corpo-a-corpo (cabeça de uma cobra
-    contra o corpo/cabeça de outra, respeitando o cooldown de 1 ataque por
-    segundo por atacante) a todas as cobras vivas neste frame. Retorna o
-    conjunto de cobras que devem morrer agora (parede, automordida ou HP<=0).
+    Aplica dano de bombas, foguetes e de ataques corpo-a-corpo.
     """
     mortas = set()
     for cobra in todas_vivas:
@@ -461,14 +696,57 @@ def processar_colisoes(todas_vivas, bombas, agora_ms):
                 tocar_fala(cobra, "morte")
             mortas.add(cobra)
             continue
+        
+        # Spy Backstab (Instakill se atingir o rabo)
+        if cobra.nome == "Spy" and cobra.cooldown_backstab <= 0:
+            for outra in todas_vivas:
+                if outra is cobra or outra in mortas: continue
+                # Só mata instantaneamente se acertar EXATAMENTE o último segmento
+                # e se a cobra tiver mais de um segmento (para evitar instakill na cabeça se for só 1 bloco)
+                if len(outra.body) > 1 and cab == outra.body[-1]:
+                    aplicar_dano(outra, outra.vida_max, cobra)
+                    cobra.cooldown_backstab = 10 * max(1, fps_base)
+        
+        # Pyro Burn (Dano de fogo por contato)
+        if cobra.nome == "Pyro":
+            for outra in todas_vivas:
+                if outra is cobra or outra in mortas: continue
+                if (outra.cabeca in cobra.body) or (cobra.cabeca in outra.body):
+                    outra.queimando_timer = 6 * max(1, fps_base)
+                    outra.burn_source = cobra
+
         crit = bomba_em(cab, bombas)
         if crit is not None:
             remover_bomba(cab, bombas)
-            aplicar_dano(cobra, DANO_BOMBA_CRIT if crit else DANO_BOMBA,
-                         "bomba crítica" if crit else "bomba")
+            if crit:
+                tocar(SOM_CRIT_EXPLODE)
+            else:
+                tocar(SOM_EXPLODE)
+            aplicar_explosao(cab[0], cab[1], DANO_BOMBA_CRIT if crit else DANO_BOMBA,
+                             "explosivo crítico" if crit else "explosivo", todas_vivas)
             if cobra.vida <= 0:
                 mortas.add(cobra)
                 continue
+        # Colisão com Foguetes
+        for f in foguetes[:]:
+            if any(abs(p[0] - f.x) < GRID and abs(p[1] - f.y) < GRID for p in cobra.body):
+                tocar(SOM_EXPLODE)
+                aplicar_explosao(f.x, f.y, f.dano, "explosivo", todas_vivas)
+                if f in foguetes: foguetes.remove(f)
+                if cobra.vida <= 0:
+                    mortas.add(cobra)
+                    break
+        
+        # Colisão com Flechas
+        for f in flechas[:]:
+            if f.x == cab[0] and f.y == cab[1]:
+                aplicar_dano(cobra, 360, f.dono)
+                if f in flechas: flechas.remove(f)
+            elif any(p[0] == f.x and p[1] == f.y for p in cobra.body[1:]):
+                aplicar_dano(cobra, 120, f.dono)
+                if f in flechas: flechas.remove(f)
+
+        if cobra in mortas: continue
         for outra in todas_vivas:
             if outra is cobra or outra in mortas:
                 continue
@@ -487,6 +765,15 @@ def nomes_restantes(cobras_cpu, n=3):
     r = [c for c in cobras_cpu if not c._eliminado]
     v = " & ".join(c.nome for c in r[:n])
     return (v + (f" +{len(r)-n}" if len(r) > n else "")) if r else "?"
+def draw_grade():
+    # Desenha a grade de fundo alinhada ao GRID
+    for x in range(0, LARGURA + 1, GRID):
+        pygame.draw.line(tela, (25, 25, 35), (x, HUD_ALTURA), (x, ALTURA))
+    for y in range(Y_MIN_CELLS * GRID, ALTURA + 1, GRID):
+        pygame.draw.line(tela, (25, 25, 35), (0, y), (LARGURA, y))
+    # Borda da área de jogo para torná-la mais visível
+    pygame.draw.rect(tela, (80, 80, 100), (0, HUD_ALTURA, LARGURA, ALTURA - HUD_ALTURA), 3)
+
 def draw_hud(p1, p2, cpus, nivel):
     pygame.draw.rect(tela, HUD, (0, 0, LARGURA, HUD_ALTURA))
     def _ic(c):
@@ -549,7 +836,13 @@ def draw_selecao(passo, p1_idx, p2_idx, hover):
             ini = fonte_g.render(NOME_CLASSES[i][0], True, BRANCO if not b else (75,75,75))
             tela.blit(ini, (r.x+CARD_W//2-ini.get_width()//2, r.y+56-ini.get_height()//2))
         ns = fonte_sel.render(NOME_CLASSES[i], True, BRANCO if not b else (70,70,70))
-        tela.blit(ns, (r.x+CARD_W//2-ns.get_width()//2, r.y+CARD_H-32))
+        tela.blit(ns, (r.x+CARD_W//2-ns.get_width()//2, r.y+96))
+        desc = DESC_CLASSES.get(NOME_CLASSES[i], ["", ""])
+        c_desc = (200, 200, 200) if not b else (60, 60, 60)
+        d1 = fonte_fx.render(desc[0], True, c_desc)
+        tela.blit(d1, (r.x+CARD_W//2-d1.get_width()//2, r.y+122))
+        d2 = fonte_fx.render(desc[1], True, c_desc)
+        tela.blit(d2, (r.x+CARD_W//2-d2.get_width()//2, r.y+140))
         if p1 or p2:
             tag = fonte_p.render("P1 ✓" if p1 else "P2 ✓", True, (235,80,80) if p1 else (120,190,55))
             tela.blit(tag, (r.right-tag.get_width()-8, r.y+8))
@@ -567,7 +860,7 @@ selecao_p2    = -1
 hover_sel     = -1
 p1 = p2 = None
 cobras_cpu                     = []
-comidas, ctipos, cimgs, bombas = [], [], [], []
+comidas, ctipos, cimgs, bombas, foguetes, flechas = [], [], [], [], [], []
 cset                           = set()
 vencedor, msg_fim              = "", ""
 tick_global                    = 0
@@ -592,7 +885,7 @@ def iniciar_rodada():
     for c in random.sample(ps, min(len(ps), 3)): tocar_fala(c, "atacar")
 def processar_selecao(idx):
     global selecao_passo, selecao_p1, selecao_p2
-    global p1, p2, cobras_cpu, comidas, ctipos, cimgs, bombas
+    global p1, p2, cobras_cpu, comidas, ctipos, cimgs, bombas, foguetes
     bloq = set()
     if selecao_p1 >= 0: bloq.add(selecao_p1)
     if selecao_p2 >= 0: bloq.add(selecao_p2)
@@ -603,12 +896,12 @@ def processar_selecao(idx):
         if modo_jogo in DOIS_JOGADORES_MODOS:
             selecao_passo = 2
         else:
-            p1, p2, cobras_cpu, comidas, ctipos, cimgs, bombas = \
+            p1, p2, cobras_cpu, comidas, ctipos, cimgs, bombas, foguetes, flechas = \
                 novo_jogo(modo_jogo, selecao_p1)
             iniciar_rodada()
     else:
         selecao_p2 = idx
-        p1, p2, cobras_cpu, comidas, ctipos, cimgs, bombas = \
+        p1, p2, cobras_cpu, comidas, ctipos, cimgs, bombas, foguetes, flechas = \
             novo_jogo(modo_jogo, selecao_p1, selecao_p2)
         iniciar_rodada()
 while True:
@@ -636,13 +929,19 @@ while True:
             elif estado == JOGANDO:
                 d1 = {pygame.K_w:(0,-1), pygame.K_s:(0,1), pygame.K_a:(-1,0), pygame.K_d:(1,0)}
                 if k in d1 and p1.dir != (d1[k][0]*-1, d1[k][1]*-1): p1.dir = d1[k]
+                if k == pygame.K_SPACE: executar_habilidade(p1, todas_vivas, bombas, foguetes, flechas)
                 if p2:
                     d2 = {pygame.K_UP:(0,-1), pygame.K_DOWN:(0,1), pygame.K_LEFT:(-1,0), pygame.K_RIGHT:(1,0)}
                     if k in d2 and p2.dir != (d2[k][0]*-1, d2[k][1]*-1): p2.dir = d2[k]
+                    if k in (pygame.K_RSHIFT, pygame.K_RETURN, pygame.K_KP_ENTER): executar_habilidade(p2, todas_vivas, bombas, foguetes, flechas)
             elif estado == FIM:
-                if k == pygame.K_r: p1, p2, cobras_cpu, comidas, ctipos, cimgs, bombas = novo_jogo(modo_jogo, selecao_p1, selecao_p2 if modo_jogo in DOIS_JOGADORES_MODOS else None); iniciar_rodada()
-                if k == pygame.K_c: selecao_passo, selecao_p1, selecao_p2, hover_sel, estado = 1, -1, -1, -1, SELECAO
-                if k == pygame.K_m: p1 = p2 = None; cobras_cpu, comidas, ctipos, cimgs, bombas, cset, vencedor, msg_fim, estado = [], [], [], [], [], set(), "", "", MENU
+                if k == pygame.K_r: p1, p2, cobras_cpu, comidas, ctipos, cimgs, bombas, foguetes, flechas = novo_jogo(modo_jogo, selecao_p1, selecao_p2 if modo_jogo in DOIS_JOGADORES_MODOS else None); iniciar_rodada()
+                if k == pygame.K_c:
+                    if IMGS_FUNDOS: IMG_MENU = random.choice(IMGS_FUNDOS)
+                    selecao_passo, selecao_p1, selecao_p2, hover_sel, estado = 1, -1, -1, -1, SELECAO
+                if k == pygame.K_m:
+                    if IMGS_FUNDOS: IMG_MENU = random.choice(IMGS_FUNDOS)
+                    p1 = p2 = None; cobras_cpu, comidas, ctipos, cimgs, bombas, foguetes, flechas, cset, vencedor, msg_fim, estado = [], [], [], [], [], [], [], set(), "", "", MENU
     if estado == SELECAO:
         draw_selecao(selecao_passo, selecao_p1, selecao_p2, hover_sel)
         pygame.display.flip()
@@ -691,7 +990,7 @@ while True:
         corpos_obs = [c.body for c in todas_vivas]
         bomb_pos   = {(x, y) for x, y, _ in bombas}
         for cpu in vivas_cpu:
-            cpu.ia(comidas, corpos_obs, bomb_pos)
+            cpu.ia(comidas, corpos_obs, bomb_pos, todas_vivas, bombas, foguetes, flechas)
 
         # Movimento com velocidade fracionária por classe. A comida é checada
         # a cada passo individual (não só no fim do frame) para não "pular"
@@ -705,9 +1004,14 @@ while True:
                 checar_comer(cobra, comidas, ctipos, cimgs, cset, todas_vivas, bombas)
 
         bombas = update_bombas(nivel, todas_vivas, bombas, cset)
+        foguetes = update_foguetes(nivel, todas_vivas, foguetes)
+
+        for f in flechas[:]:
+            f.move()
+            if f.fora(): flechas.remove(f)
 
         agora_ms = pygame.time.get_ticks()
-        mortas   = processar_colisoes(todas_vivas, bombas, agora_ms)
+        mortas   = processar_colisoes(todas_vivas, bombas, foguetes, flechas, agora_ms)
 
         for cpu in vivas_cpu:
             if cpu in mortas:
@@ -773,19 +1077,31 @@ while True:
                 tocar_administrator("fracasso")
     sc = (p1.score if p1 else 0) + (p2.score if p2 else 0)
     tela.fill(FUNDO_FLASH if sc >= 200 and pygame.time.get_ticks()//150%2 else FUNDO)
+    draw_grade()
     if p1: draw_hud(p1, p2, cobras_cpu, sc//50+1)
     for pos, t, img in zip(comidas, ctipos, cimgs):
         if img: tela.blit(img, pos)
         else: pygame.draw.rect(tela, COR_COMIDA[t], (*pos, GRID, GRID), border_radius=4); tela.blit(fonte_fx.render(NOME_COMIDA[t][0], True, BRANCO), (pos[0]+2, pos[1]+2))
     for bx, by, crit in bombas:
-        if IMG_BOMBA:
-            tela.blit(IMG_BOMBA, (bx, by))
-            if crit: pygame.draw.rect(tela, (255,40,40), (bx-2,by-2,GRID+4,GRID+4), 2, border_radius=6)
+        img_b = IMG_BOMBA_CRIT if crit else IMG_BOMBA_NORMAL
+        if img_b:
+            tela.blit(img_b, (bx, by))
         else:
             ct = (bx+GRID//2, by+GRID//2)
             pygame.draw.circle(tela, (60,10,10) if crit else (30,30,30), ct, GRID//2)
             pygame.draw.circle(tela, (255,30,30) if crit else (255,90,30), ct, GRID//2, 2)
             pygame.draw.line(tela, (255,180,60), (ct[0]+1,by), (ct[0]+5,by-5), 2)
+    for f in foguetes:
+        if IMG_ROCKET:
+            tela.blit(IMG_ROCKET, (f.x, f.y))
+        else:
+            pygame.draw.rect(tela, (200,200,200), (f.x, f.y, GRID, GRID))
+    for f in flechas:
+        center = (f.x + GRID//2, f.y + GRID//2)
+        start  = (center[0] - f.dx*GRID//2, center[1] - f.dy*GRID//2)
+        end    = (center[0] + f.dx*GRID//2, center[1] + f.dy*GRID//2)
+        pygame.draw.line(tela, (255, 220, 100), start, end, 4)
+        pygame.draw.circle(tela, (255, 220, 100), end, 3)
     for c in cobras_cpu:
         if not c._eliminado: c.draw()
     if p1: p1.draw(morte=(estado==FIM and p1.morta))

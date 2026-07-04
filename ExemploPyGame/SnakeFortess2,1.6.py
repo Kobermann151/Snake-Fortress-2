@@ -256,7 +256,7 @@ class SnakeCPU(Snake):
                 for dist in range(2, 11):
                     px, py = cab[0]+dx*dist*GRID, cab[1]+dy*dist*GRID
                     if any(p[0]==px and p[1]==py for c in todas_vivas if c is not self for p in c.body):
-                        executar_habilidade(self, todas_vivas, bombs, foguetes, flechas); break
+                        executar_habilidade(self, todas_vivas, bombas, foguetes, flechas); break
             elif self.nome == "Medic" and self.vida < self.vida_max*0.6 or (self.nome == "Demoman" and any(any(abs(p[0]-cab[0])<=3*GRID and abs(p[1]-cab[1])<=3*GRID for p in c.body) for c in todas_vivas if c is not self)):
                 executar_habilidade(self, todas_vivas, bombas, foguetes, flechas)
 def pos_livre(cobras, bombas, cset):
@@ -459,7 +459,7 @@ def draw_selecao(passo, p1_idx, p2_idx, hover):
     centralizar(fonte_p.render("ESC – Voltar", True, (110,110,110)), ALTURA-26)
 
 estado, modo_jogo, selecao_passo, selecao_p1, selecao_p2, hover_sel = MENU, MODO_GUERRA, 1, -1, -1, -1
-p1 = p2 = None; cobras_cpu, coms, ctps, cims, roks, flas, bombs, cset = [], [], [], [], [], [], [], set()
+p1 = p2 = None; cobras_cpu, coms, ctps, cims, roks, flas, bombs, vivas, cset = [], [], [], [], [], [], [], [], set()
 vencedor, msg_fim, tick_global, fps_base, contagem_inicio_ms = "", "", 0, 8, 0
 
 def iniciar_rodada():
@@ -512,7 +512,7 @@ while True:
                         nova = d2[k]
                         if not p2.mudou_dir and nova != (-p2.ultimo_dir[0], -p2.ultimo_dir[1]):
                             p2.dir, p2.mudou_dir = nova, True
-                    if k in (pygame.K_RSHIFT, pygame.K_RETURN, pygame.K_KP_ENTER): executar_habilidade(p2, vivas, bombas, roks, flas)
+                    if k in (pygame.K_RSHIFT, pygame.K_RETURN, pygame.K_KP_ENTER): executar_habilidade(p2, vivas, bombs, roks, flas)
                 if k == pygame.K_m and (p1.morta and (p2 is None or p2.morta)):
                     # Força fim da partida (desiste de assistir)
                     v_atuais = [c for c in cobras_cpu if not c._eliminado]
@@ -525,13 +525,13 @@ while True:
                     estado = FIM
                     tocar_administrator("fracasso")
             elif estado == FIM:
-                if k == pygame.K_r: p1, p2, cobras_cpu, comidas, ctipos, cimgs, bombas, foguetes, flechas = novo_jogo(modo_jogo, selecao_p1, selecao_p2 if modo_jogo in DOIS_JOGADORES_MODOS else None); iniciar_rodada()
+                if k == pygame.K_r: p1, p2, cobras_cpu, coms, ctps, cims, bombs, roks, flas = novo_jogo(modo_jogo, selecao_p1, selecao_p2 if modo_jogo in DOIS_JOGADORES_MODOS else None); iniciar_rodada()
                 if k == pygame.K_c:
                     if IMGS_FUNDOS: IMG_MENU = random.choice(IMGS_FUNDOS)
                     selecao_passo, selecao_p1, selecao_p2, hover_sel, estado = 1, -1, -1, -1, SELECAO
                 if k == pygame.K_m:
                     if IMGS_FUNDOS: IMG_MENU = random.choice(IMGS_FUNDOS)
-                    p1 = p2 = None; cobras_cpu, comidas, ctipos, cimgs, bombas, foguetes, flechas, cset, vencedor, msg_fim, estado = [], [], [], [], [], [], [], set(), "", "", MENU
+                    p1 = p2 = None; cobras_cpu, coms, ctps, cims, bombs, roks, flas, cset, vencedor, msg_fim, estado = [], [], [], [], [], [], [], set(), "", "", MENU
     if estado == SELECAO:
         tocar_musica("menu")
         draw_selecao(selecao_passo, selecao_p1, selecao_p2, hover_sel)

@@ -368,6 +368,19 @@ def executar_habilidade(c, vivas, bombs, roks, flas):
 
 def processar_colisoes(vivas, bombs, roks, flas, ms):
     mortas = set()
+    for f in flas[:]:
+        crit = bomba_em((f.x, f.y), bombs)
+        if crit is not None:
+            remover_bomba((f.x, f.y), bombs); tocar(SOM_CRIT_EXPLODE if crit else SOM_EXPLODE)
+            aplicar_explosao(f.x, f.y, DANO_BOMBA_CRIT if crit else DANO_BOMBA, "explosivo crítico" if crit else "explosivo", vivas)
+            if f in flas: flas.remove(f)
+            continue
+        for r in roks[:]:
+            if abs(f.x - r.x) < GRID and abs(f.y - r.y) < GRID:
+                tocar(SOM_EXPLODE); aplicar_explosao(r.x, r.y, r.dano, "explosivo", vivas)
+                if r in roks: roks.remove(r)
+                if f in flas: flas.remove(f)
+                break
     for c in vivas:
         cab = c.cabeca
         if fora(cab) or cab in c.body[1:] or c.vida <= 0: mortas.add(c); continue
